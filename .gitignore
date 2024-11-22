@@ -3,3 +3,4 @@
 /train_smm.parquet
 /train_zvuk.parquet
 /.idea
+/venv/
