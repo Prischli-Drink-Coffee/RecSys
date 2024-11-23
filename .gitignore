@@ -7,3 +7,6 @@
 /RePlay/
 /test.ipynb
 /metrics.ipynb
+/.ipynb_checkpoints
+/__pycache__
+/.git
