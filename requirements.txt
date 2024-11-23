@@ -5,3 +5,4 @@ polars
 hydra-core
 tqdm
 implicit
+replay-rec[all]

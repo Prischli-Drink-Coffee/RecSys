@@ -4,3 +4,6 @@
 /train_zvuk.parquet
 /.idea
 /venv/
+/RePlay/
+/test.ipynb
+/metrics.ipynb
