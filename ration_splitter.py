@@ -1,6 +1,5 @@
 from typing import List, Optional, Tuple
 
-import polars as pl
 
 from pandas import DataFrame as PandasDataFrame
 

@@ -51,13 +51,13 @@ class Dataset:
         self._categorical_encoded = categorical_encoded
 
         try:
-            feature_schema.item_id_column()
+            feature_schema.item_id_column
         except Exception as exception:
             msg = "Item id column is not set."
             raise ValueError(msg) from exception
 
         try:
-            feature_schema.query_id_column()
+            feature_schema.query_id_column
         except Exception as exception:
             msg = "Query id column is not set."
             raise ValueError(msg) from exception
@@ -372,8 +372,6 @@ class Dataset:
 
     def _assign_df_type(self):
         self.is_pandas = isinstance(self.interactions, PandasDataFrame)
-        self.is_spark = isinstance(self.interactions, SparkDataFrame)
-        self.is_polars = isinstance(self.interactions, PolarsDataFrame)
 
     def _get_cardinality(self, feature: FeatureInfo) -> Callable:
         def callback(column: str) -> int:

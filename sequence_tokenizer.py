@@ -13,11 +13,11 @@ from schema import FeatureHint, FeatureSchema, FeatureSource, FeatureType
 from dataset_label_encoder import DatasetLabelEncoder
 from label_encoder import LabelEncoder, LabelEncodingRule, HandleUnknownStrategies
 
-from tourch_schema import TensorFeatureInfo, TensorFeatureSource, TensorSchema
+from torch_schema import TensorFeatureInfo, TensorFeatureSource, TensorSchema
 from sequential_dataset import PandasSequentialDataset, SequentialDataset
 from utils import ensure_pandas, groupby_sequences
 
-SequenceDataFrameLike = Union[PandasDataFrame, PolarsDataFrame]
+SequenceDataFrameLike = Union[PandasDataFrame]
 
 
 class SequenceTokenizer:
@@ -31,7 +31,7 @@ class SequenceTokenizer:
     def __init__(
             self,
             tensor_schema: TensorSchema,
-            handle_unknown_rule: HandleUnknownStrategies = "error",
+            handle_unknown_rule: HandleUnknownStrategies = "drop",
             default_value_rule: Optional[Union[int, str]] = None,
             allow_collect_to_master: bool = False,
     ) -> None:
@@ -152,9 +152,7 @@ class SequenceTokenizer:
 
         matched_dataset = self._match_features_with_tensor_schema(dataset, schema)
 
-        is_polars = isinstance(dataset.interactions, PolarsDataFrame)
         encoded_dataset = self._encode_dataset(matched_dataset)
-        is_polars = isinstance(encoded_dataset.interactions, PolarsDataFrame)
         grouped_interactions, query_features, item_features = self._group_dataset(encoded_dataset)
         sequence_features = self._make_sequence_features(
             schema,
@@ -166,7 +164,7 @@ class SequenceTokenizer:
 
         assert self._tensor_schema.item_id_feature_name
 
-        dataset_type = PolarsSequentialDataset if is_polars else PandasSequentialDataset
+        dataset_type = PandasSequentialDataset
 
         return dataset_type(
             tensor_schema=schema,
@@ -188,13 +186,6 @@ class SequenceTokenizer:
             groupby_col=dataset.feature_schema.query_id_column,
             sort_col=dataset.feature_schema.interactions_timestamp_column,
         )
-
-        if isinstance(grouped_interactions, PolarsDataFrame):
-            return (
-                grouped_interactions.sort(dataset.feature_schema.query_id_column),
-                dataset.query_features,
-                dataset.item_features,
-            )
 
         # We sort by QUERY_ID to make sure order is deterministic
         grouped_interactions_pd = ensure_pandas(
@@ -229,9 +220,6 @@ class SequenceTokenizer:
             query_features=query_features,
             item_features=item_features,
         )
-
-        if isinstance(grouped_interactions, PolarsDataFrame):
-            return processor.process_features_polars()
 
         all_features: Dict[str, Union[np.ndarray, List[np.ndarray]]] = {
             feature_schema.query_id_column: grouped_interactions[feature_schema.query_id_column].values}
@@ -516,17 +504,8 @@ class _SequenceProcessor:
         self._query_id_column = query_id_column
         self._item_id_column = item_id_column
         self._grouped_interactions = grouped_interactions
-        self._is_polars = isinstance(grouped_interactions, PolarsDataFrame)
-        if not self._is_polars:
-            self._query_features = (
-                query_features.set_index(self._query_id_column).sort_index() if query_features is not None else None
-            )
-            self._item_features = (
-                item_features.set_index(self._item_id_column).sort_index() if item_features is not None else None
-            )
-        else:
-            self._query_features = query_features
-            self._item_features = item_features
+        self._query_features = query_features
+        self._item_features = item_features
 
     def process_feature(self, tensor_feature_name: str) -> List[np.ndarray]:
         """
@@ -543,25 +522,6 @@ class _SequenceProcessor:
             return self._process_num_feature(tensor_feature)
         assert False, "Unknown tensor feature type"
 
-    def process_features_polars(self) -> PolarsDataFrame:
-        """
-        Process all features in `tensor_schema` for Polars dataframes.
-        Each Polars processing step returns DataFrame with query and target column
-        to join in result dataframe.
-
-        :returns: processed Polars DataFrame with all features from tensor schema.
-        """
-        data = self._grouped_interactions.select(self._query_id_column)
-        for tensor_feature_name in self._tensor_schema:
-            tensor_feature = self._tensor_schema[tensor_feature_name]
-            if tensor_feature.is_cat:
-                data = data.join(self._process_cat_feature(tensor_feature), on=self._query_id_column, how="left")
-            elif tensor_feature.is_num:
-                data = data.join(self._process_num_feature(tensor_feature), on=self._query_id_column, how="left")
-            else:
-                assert False, "Unknown tensor feature type"
-        return data
-
     def _process_cat_feature(self, tensor_feature: TensorFeatureInfo) -> List[np.ndarray]:
         """
         Process categorical tensor feature depends on it source.
@@ -574,45 +534,6 @@ class _SequenceProcessor:
         if tensor_feature.feature_source.source == FeatureSource.ITEM_FEATURES:
             return self._process_cat_item_feature(tensor_feature)
         assert False, "Unknown tensor feature source table"
-
-    def _process_num_feature_polars(self, tensor_feature: TensorFeatureInfo) -> PolarsDataFrame:
-        def get_sequence(user, source, data):
-            if source.source == FeatureSource.INTERACTIONS:
-                return np.array(
-                    self._grouped_interactions.filter(pl.col(self._query_id_column) == user)[source.column][0],
-                    dtype=np.float32,
-                ).tolist()
-            elif source.source == FeatureSource.ITEM_FEATURES:
-                return (
-                    pl.DataFrame({self._item_id_column: data})
-                    .join(self._item_features, on=self._item_id_column, how="left")
-                    .select(source.column)
-                    .to_numpy()
-                    .reshape(-1)
-                    .tolist()
-                )
-            else:
-                assert False, "Unknown tensor feature source table"
-
-        result = (
-            self._grouped_interactions.select(self._query_id_column, self._item_id_column).map_rows(
-                lambda x: (x[0], [get_sequence(x[0], source, x[1]) for source in tensor_feature.feature_sources])
-            )
-        ).rename({"column_0": self._query_id_column, "column_1": tensor_feature.name})
-
-        if tensor_feature.feature_hint == FeatureHint.TIMESTAMP:
-            reshape_size = -1
-        else:
-            reshape_size = (-1, len(tensor_feature.feature_sources))
-
-        return pl.DataFrame(
-            {
-                self._query_id_column: result[self._query_id_column].to_list(),
-                tensor_feature.name: [
-                    np.array(x).reshape(reshape_size).tolist() for x in result[tensor_feature.name].to_list()
-                ],
-            }
-        )
 
     def _process_num_feature(self, tensor_feature: TensorFeatureInfo) -> List[np.ndarray]:
         """
@@ -627,9 +548,6 @@ class _SequenceProcessor:
         """
         assert tensor_feature.feature_sources is not None
         assert tensor_feature.is_seq
-
-        if self._is_polars:
-            return self._process_num_feature_polars(tensor_feature)
 
         values: List[np.ndarray] = []
         for pos, item_id_sequence in enumerate(self._grouped_interactions[self._item_id_column]):
@@ -665,11 +583,6 @@ class _SequenceProcessor:
         source = tensor_feature.feature_source
         assert source is not None
 
-        if self._is_polars:
-            return self._grouped_interactions.select(self._query_id_column, source.column).rename(
-                {source.column: tensor_feature.name}
-            )
-
         return [np.array(sequence, dtype=np.int64) for sequence in self._grouped_interactions[source.column]]
 
     def _process_cat_query_feature(self, tensor_feature: TensorFeatureInfo) -> List[np.ndarray]:
@@ -685,21 +598,6 @@ class _SequenceProcessor:
 
         source = tensor_feature.feature_source
         assert source is not None
-
-        if self._is_polars:
-            if tensor_feature.is_seq:
-                lengths = self._grouped_interactions.select(
-                    self._query_id_column, pl.col(self._item_id_column).list.len().alias("len")
-                )
-                result = self._query_features.join(lengths, on=self._query_id_column, how="left")
-                repeat_value = "len"
-            else:
-                result = self._query_features
-                repeat_value = 1
-
-            return result.select(self._query_id_column, pl.col(source.column).repeat_by(repeat_value)).rename(
-                {source.column: tensor_feature.name}
-            )
 
         query_feature = self._query_features[source.column].values
         if tensor_feature.is_seq:
@@ -723,23 +621,6 @@ class _SequenceProcessor:
 
         source = tensor_feature.feature_source
         assert source is not None
-
-        if self._is_polars:
-            return (
-                self._grouped_interactions.select(self._query_id_column, self._item_id_column)
-                .map_rows(
-                    lambda x: (
-                        x[0],
-                        pl.DataFrame({self._item_id_column: x[1]})
-                        .join(self._item_features, on=self._item_id_column, how="left")
-                        .select(source.column)
-                        .to_numpy()
-                        .reshape(-1)
-                        .tolist(),
-                    )
-                )
-                .rename({"column_0": self._query_id_column, "column_1": tensor_feature.name})
-            )
 
         item_feature = self._item_features[source.column]
         values: List[np.ndarray] = []

@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset as TorchDataset
 
-from tourch_schema import TensorFeatureInfo, TensorMap, TensorSchema
+from torch_schema import TensorFeatureInfo, TensorMap, TensorSchema
 from sequential_dataset import SequentialDataset
 
 

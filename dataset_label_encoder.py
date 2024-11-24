@@ -24,7 +24,7 @@ class DatasetLabelEncoder:
 
     def __init__(
         self,
-        handle_unknown_rule: HandleUnknownStrategies = "error",
+        handle_unknown_rule: HandleUnknownStrategies = "drop",
         default_value_rule: Optional[Union[int, str]] = None,
     ) -> None:
         """

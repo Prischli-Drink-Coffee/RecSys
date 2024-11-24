@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 from pandas import DataFrame as PandasDataFrame
 
-from tourch_schema import TensorSchema
+from torch_schema import TensorSchema
 
 
 class SequentialDataset(abc.ABC):

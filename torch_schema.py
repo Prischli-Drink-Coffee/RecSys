@@ -243,6 +243,9 @@ class TensorSchema(Mapping[str, TensorFeatureInfo]):
         """
         :param features_list: list of tensor feature infos.
         """
+        if not features_list:
+            raise ValueError("features_list is empty. Please check the input data.")
+        print(f"Features list: {features_list}")
         features_list = [features_list] if not isinstance(features_list, Sequence) else features_list
         self._tensor_schema = {feature.name: feature for feature in features_list}
 
@@ -480,6 +483,8 @@ class TensorSchema(Mapping[str, TensorFeatureInfo]):
                     filtered_features,
                 )
             )
+
+        print(filtered_features)
 
         return TensorSchema(filtered_features)
 
